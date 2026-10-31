@@ -1,0 +1,10 @@
+# Copy to ansible/inventory.ini (git-ignored) and edit. For Jenkins, upload your copy as a "Secret file" credential.
+# Replace the placeholders below; never commit real addresses, users or keys.
+
+[attendance]
+# <name> ansible_host=<server ip or dns name> ansible_user=<ssh user with sudo>
+app01 ansible_host=203.0.113.10 ansible_user=deploy
+
+[attendance:vars]
+ansible_port=22
+# ansible_ssh_private_key_file=~/.ssh/<your_key>   # or pass --private-key / use ssh-agent

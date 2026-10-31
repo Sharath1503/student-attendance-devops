@@ -1,0 +1,25 @@
+---
+# Non-secret defaults for the "attendance" host group. Override with -e or in your inventory.
+app_name: attendance
+app_user: attendance
+app_group: attendance
+app_dir: /opt/attendance
+app_port: 8080
+app_java_opts: "-Xms256m -Xmx512m"
+app_keep_releases: 5
+
+# Database connection (the PASSWORD is never stored here - it is read from the DB_PASSWORD environment variable)
+db_url: "jdbc:mysql://localhost:3306/attendance_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"
+db_username: attendance_app
+
+# Allowed browser origin(s) when the UI is opened on a different origin (not needed when served by the app itself)
+cors_allowed_origins: "http://localhost:{{ app_port }}"
+
+# Set to false in production if you do not want the Swagger UI exposed
+swagger_enabled: "true"
+
+# Initial administrator username (password comes from the BOOTSTRAP_ADMIN_PASSWORD environment variable)
+bootstrap_admin_username: admin
+
+# Optional demo data. NEVER enable on a real system.
+seed_demo_data: "false"

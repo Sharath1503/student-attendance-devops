@@ -1,0 +1,6 @@
+---
+# Style rules deliberately relaxed for this small single-role project.
+skip_list:
+  - var-naming[no-role-prefix]
+  - command-instead-of-module
+  - yaml[line-length]

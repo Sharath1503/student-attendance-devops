@@ -1,0 +1,20 @@
+---
+# Deploys the Spring Boot jar to the "attendance" hosts.
+#
+# Required input : app_jar_src (path of the jar on the control node), app_version (label for this release)
+# Secrets (read from the control node's ENVIRONMENT, never from the command line):
+#   DB_PASSWORD, JWT_SECRET, BOOTSTRAP_ADMIN_PASSWORD
+#
+# Example (local test against your own machine):
+#   export DB_PASSWORD=... JWT_SECRET=... BOOTSTRAP_ADMIN_PASSWORD=...
+#   ansible-playbook -i inventory.local.ini playbooks/deploy.yml \
+#       -e app_jar_src=../backend/target/student-attendance.jar -e app_version=local-1
+- name: Deploy Online Student Attendance System
+  hosts: attendance
+  become: true
+  gather_facts: true
+  any_errors_fatal: true
+  vars_files:
+    - ../group_vars/attendance.yml
+  roles:
+    - attendance_app

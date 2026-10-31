@@ -1,0 +1,25 @@
+# Build output
+backend/target/
+frontend/node_modules/
+frontend/dist/
+# Frontend bundle is copied into the backend by the build (Jenkins / local script)
+backend/src/main/resources/static/
+
+# Secrets and local config
+.env
+*.env
+!.env.example
+ansible/inventory.ini
+ansible/inventory.local.ini
+ansible/group_vars/**/vault.yml
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+
+# IDE / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+*.log

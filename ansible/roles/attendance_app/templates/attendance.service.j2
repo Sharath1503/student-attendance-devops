@@ -1,0 +1,25 @@
+[Unit]
+Description=Online Student Attendance System
+After=network-online.target mysql.service mysqld.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ app_user }}
+Group={{ app_group }}
+WorkingDirectory={{ app_dir }}
+EnvironmentFile=/etc/{{ app_name }}/{{ app_name }}.env
+ExecStart=/usr/bin/java {{ app_java_opts }} -jar {{ app_dir }}/current.jar
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=5
+
+# Hardening (least privilege)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths={{ app_dir }}
+
+[Install]
+WantedBy=multi-user.target

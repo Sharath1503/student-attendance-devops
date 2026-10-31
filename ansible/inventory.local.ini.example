@@ -1,0 +1,6 @@
+# Practical way to test the playbook WITHOUT a remote server:
+# run it against the Linux machine you are sitting at (Ubuntu 22.04/24.04 with systemd, or WSL2 with systemd enabled).
+# Copy to ansible/inventory.local.ini (git-ignored).
+
+[attendance]
+localhost ansible_connection=local

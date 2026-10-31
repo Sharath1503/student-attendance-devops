@@ -1,0 +1,213 @@
+---
+# 1. Pre-flight --------------------------------------------------------------------------------------------------
+- name: Check supported operating system
+  ansible.builtin.assert:
+    that:
+      - ansible_os_family in ['Debian', 'RedHat']
+      - ansible_service_mgr == 'systemd'
+    fail_msg: "Unsupported target: needs a Debian/Ubuntu or RHEL-family host running systemd (found {{ ansible_distribution }} / {{ ansible_service_mgr }})."
+
+- name: Check required inputs and secrets are present
+  ansible.builtin.assert:
+    that:
+      - app_jar_src is defined
+      - app_version is defined
+      - lookup('env', 'DB_PASSWORD') | length > 0
+      - lookup('env', 'JWT_SECRET') | length >= 32
+    fail_msg: >-
+      Missing input. Provide -e app_jar_src=<jar> -e app_version=<label> and export DB_PASSWORD and JWT_SECRET (min 32 chars)
+      in the environment of the machine running ansible-playbook.
+  no_log: true
+
+- name: Check the jar exists on the control node
+  ansible.builtin.stat:
+    path: "{{ app_jar_src }}"
+  delegate_to: localhost
+  become: false
+  register: jar_stat
+
+- name: Fail when the jar is missing
+  ansible.builtin.assert:
+    that: jar_stat.stat.exists
+    fail_msg: "Jar not found: {{ app_jar_src }}. Run the Maven build first."
+
+# 2. Server configuration (idempotent) ---------------------------------------------------------------------------
+- name: Install Java 21 runtime (Debian/Ubuntu)
+  ansible.builtin.apt:
+    name: openjdk-21-jre-headless
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: ansible_os_family == 'Debian'
+
+- name: Install Java 21 runtime (RHEL family)
+  ansible.builtin.dnf:
+    name: java-21-openjdk-headless
+    state: present
+  when: ansible_os_family == 'RedHat'
+
+- name: Verify Java is available
+  ansible.builtin.command: java -version
+  register: java_check
+  changed_when: false
+
+- name: Create application group
+  ansible.builtin.group:
+    name: "{{ app_group }}"
+    system: true
+
+- name: Create unprivileged application user
+  ansible.builtin.user:
+    name: "{{ app_user }}"
+    group: "{{ app_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+
+- name: Create application directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ app_user }}"
+    group: "{{ app_group }}"
+    mode: "0750"
+  loop:
+    - "{{ app_dir }}"
+    - "{{ app_dir }}/releases"
+
+- name: Create configuration directory
+  ansible.builtin.file:
+    path: /etc/{{ app_name }}
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Write environment file with configuration and secrets (root-only, never logged)
+  ansible.builtin.template:
+    src: attendance.env.j2
+    dest: /etc/{{ app_name }}/{{ app_name }}.env
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart attendance
+
+- name: Install systemd unit
+  ansible.builtin.template:
+    src: attendance.service.j2
+    dest: /etc/systemd/system/{{ app_name }}.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart attendance
+
+# 3. Release + switch (keeps previous releases for rollback) -----------------------------------------------------
+- name: Remember the release that is live now
+  ansible.builtin.stat:
+    path: "{{ app_dir }}/current.jar"
+  register: previous_live
+
+- name: Copy the new jar into releases/
+  ansible.builtin.copy:
+    src: "{{ app_jar_src }}"
+    dest: "{{ app_dir }}/releases/{{ app_name }}-{{ app_version }}.jar"
+    owner: "{{ app_user }}"
+    group: "{{ app_group }}"
+    mode: "0640"
+  register: new_release
+
+- name: Point "current" at the new release
+  ansible.builtin.file:
+    src: "{{ app_dir }}/releases/{{ app_name }}-{{ app_version }}.jar"
+    dest: "{{ app_dir }}/current.jar"
+    state: link
+    force: true
+  notify: Restart attendance
+
+# Apply restarts NOW so the health check tests the new code.
+- name: Apply pending restarts
+  ansible.builtin.meta: flush_handlers
+
+- name: Ensure the service is enabled and running
+  ansible.builtin.systemd_service:
+    name: "{{ app_name }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# 4. Verification, with automatic rollback on failure ------------------------------------------------------------
+- name: Verify the deployment
+  block:
+    - name: Wait for the service port
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ app_port }}"
+        delay: 3
+        timeout: 90
+
+    - name: Check application health (HTTP 200 and status UP)
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ app_port }}/actuator/health"
+        return_content: true
+        status_code: 200
+      register: health
+      retries: 15
+      delay: 4
+      until: health.status == 200 and (health.json.status | default('')) == 'UP'
+
+    - name: Confirm the service is active
+      ansible.builtin.command: systemctl is-active {{ app_name }}
+      register: svc_state
+      changed_when: false
+      failed_when: svc_state.stdout.strip() != 'active'
+
+    - name: Report success
+      ansible.builtin.debug:
+        msg: "Deployment OK: release {{ app_version }} is healthy on port {{ app_port }}."
+
+  rescue:
+    - name: Collect the last application log lines
+      ansible.builtin.command: journalctl -u {{ app_name }} -n 40 --no-pager
+      register: app_log
+      changed_when: false
+      failed_when: false
+
+    - name: Roll back to the previous release when there was one
+      ansible.builtin.file:
+        src: "{{ previous_live.stat.lnk_source }}"
+        dest: "{{ app_dir }}/current.jar"
+        state: link
+        force: true
+      when: previous_live.stat.islnk | default(false)
+
+    - name: Restart the previous release
+      ansible.builtin.systemd_service:
+        name: "{{ app_name }}"
+        state: restarted
+      when: previous_live.stat.islnk | default(false)
+
+    - name: Fail the deployment with useful details
+      ansible.builtin.fail:
+        msg: |
+          DEPLOYMENT FAILED: release {{ app_version }} did not become healthy.
+          {{ 'Rolled back to ' + (previous_live.stat.lnk_source | basename) + '.' if previous_live.stat.islnk | default(false) else 'There was no previous release to roll back to.' }}
+          Last log lines:
+          {{ app_log.stdout | default('(no log available)') }}
+
+# 5. Housekeeping ------------------------------------------------------------------------------------------------
+- name: List releases
+  ansible.builtin.find:
+    paths: "{{ app_dir }}/releases"
+    patterns: "{{ app_name }}-*.jar"
+  register: all_releases
+
+- name: Remove old releases (keep the newest {{ app_keep_releases }})
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ (all_releases.files | sort(attribute='mtime', reverse=true))[app_keep_releases:] }}"
+  loop_control:
+    label: "{{ item.path | basename }}"

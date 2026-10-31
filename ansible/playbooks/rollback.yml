@@ -1,0 +1,48 @@
+---
+# Manual rollback: points "current" at the previous release and restarts the service.
+#   ansible-playbook -i inventory.ini playbooks/rollback.yml
+# Optional: -e rollback_to=<release file name, e.g. attendance-12-ab12cd3.jar>
+- name: Roll back Online Student Attendance System
+  hosts: attendance
+  become: true
+  vars_files:
+    - ../group_vars/attendance.yml
+  tasks:
+    - name: List releases
+      ansible.builtin.find:
+        paths: "{{ app_dir }}/releases"
+        patterns: "{{ app_name }}-*.jar"
+      register: releases
+
+    - name: Read the release that is live now
+      ansible.builtin.stat:
+        path: "{{ app_dir }}/current.jar"
+      register: live
+
+    - name: Work out the rollback target
+      ansible.builtin.set_fact:
+        live_name: "{{ live.stat.lnk_source | default('') | basename }}"
+        sorted_releases: "{{ releases.files | sort(attribute='mtime', reverse=true) | map(attribute='path') | map('basename') | list }}"
+
+    - name: Choose target (explicit rollback_to, otherwise the newest release that is not live)
+      ansible.builtin.set_fact:
+        target: "{{ rollback_to | default((sorted_releases | difference([live_name]) | first) | default('')) }}"
+
+    - name: Stop if there is nothing to roll back to
+      ansible.builtin.fail:
+        msg: "No previous release found in {{ app_dir }}/releases"
+      when: target == ''
+
+    - name: Switch to the target release
+      ansible.builtin.file:
+        src: "{{ app_dir }}/releases/{{ target }}"
+        dest: "{{ app_dir }}/current.jar"
+        state: link
+        force: true
+      notify: Restart attendance
+
+  handlers:
+    - name: Restart attendance
+      ansible.builtin.systemd_service:
+        name: "{{ app_name }}"
+        state: restarted
