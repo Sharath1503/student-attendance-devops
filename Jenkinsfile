@@ -2,7 +2,7 @@
 // Flow: Checkout -> Tool check -> Frontend build -> Maven build+test+package -> Archive -> (main only) Ansible deploy -> Health check
 //
 // Jenkins prerequisites (see docs/DEVOPS_SETUP_GUIDE.md):
-//   Global Tool Configuration : JDK named "jdk21", Maven named "maven3", NodeJS named "node22" (NodeJS plugin)
+// Global Tool Configuration : JDK named "jdk25", Maven named "maven3", NodeJS named "node22"
 //   Credentials (all optional until you deploy):
 //     attendance-deploy-ssh   SSH Username with private key   (deploy user on the target server)
 //     attendance-inventory    Secret file                     (your ansible inventory.ini, never committed)
@@ -21,7 +21,7 @@ pipeline {
     }
 
     parameters {
-        booleanParam(name: 'DEPLOY', defaultValue: true,
+        booleanParam(name: 'DEPLOY', defaultValue: false,
                 description: 'Deploy after a successful build (only honoured on the deploy branch)')
         string(name: 'DEPLOY_BRANCH', defaultValue: 'main',
                 description: 'Only this branch is ever deployed. Feature branches are built and tested only.')
