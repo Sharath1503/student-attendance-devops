@@ -182,10 +182,10 @@ pipeline {
                         -o StrictHostKeyChecking=yes ^
                         -o UserKnownHostsFile="%SSH_KNOWN_HOSTS%" ^
                         "%WORKSPACE%\\backend\\target\\student-attendance.jar" ^
-                        %SSH_USER%@%SSH_HOST%:/tmp/student-attendance.jar
+                        %SSH_USER%@%SSH_HOST%:/home/sande/student-attendance.jar
 
                     if errorlevel 1 exit /b 1
-                '''
+                    '''
 
                 echo 'Preparing release version and executing Ansible deployment.'
 
@@ -200,7 +200,7 @@ pipeline {
                         "printf 'app_jar_src: /home/sande/student-attendance.jar\\napp_version: jenkins-%BUILD_NUMBER%\\n' > /home/sande/deploy-vars.yml && sudo -n /usr/local/sbin/deploy-attendance"
 
                     if errorlevel 1 exit /b 1
-                '''
+                    '''
             }
         }
 
