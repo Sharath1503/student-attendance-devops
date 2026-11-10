@@ -12,7 +12,7 @@ pipeline {
         booleanParam(
             name: 'DEPLOY',
             defaultValue: false,
-            description: 'Enable deployment only after configuring a Linux Ansible agent'
+            description: 'Deploy the application to Ubuntu WSL using Ansible'
         )
         string(
             name: 'DEPLOY_BRANCH',
@@ -21,8 +21,8 @@ pipeline {
         )
         string(
             name: 'APP_HEALTH_URL',
-            defaultValue: '',
-            description: 'Optional application health URL'
+            defaultValue: 'http://localhost:8081/actuator/health',
+            description: 'Application health endpoint'
         )
     }
 
@@ -30,7 +30,10 @@ pipeline {
         timestamps()
         timeout(time: 30, unit: 'MINUTES')
         disableConcurrentBuilds()
-        buildDiscarder(logRotator(numToKeepStr: '15', artifactNumToKeepStr: '5'))
+        buildDiscarder(logRotator(
+            numToKeepStr: '15',
+            artifactNumToKeepStr: '5'
+        ))
     }
 
     triggers {
@@ -40,6 +43,11 @@ pipeline {
     environment {
         MAVEN_OPTS = '-Dmaven.repo.local=.m2/repository'
         APP_JAR = 'backend\\target\\student-attendance.jar'
+
+        SSH_HOST = '172.28.51.54'
+        SSH_USER = 'sande'
+        SSH_KEY = 'C:\\ProgramData\\Jenkins\\ssh\\jenkins_wsl_key'
+        SSH_KNOWN_HOSTS = 'C:\\ProgramData\\Jenkins\\.jenkins\\.ssh\\known_hosts'
     }
 
     stages {
@@ -72,6 +80,8 @@ pipeline {
                     node --version
                     npm --version
                     git --version
+                    ssh -V
+                    scp
                 '''
             }
         }
@@ -162,10 +172,35 @@ pipeline {
             }
 
             steps {
-                error(
-                    'Ansible deployment is not enabled on this Windows Jenkins agent. ' +
-                    'Configure a Linux deployment agent before enabling DEPLOY.'
-                )
+                echo 'Transferring application JAR to Ubuntu WSL.'
+
+                bat '''
+                    @echo off
+
+                    scp -i "%SSH_KEY%" ^
+                        -o BatchMode=yes ^
+                        -o StrictHostKeyChecking=yes ^
+                        -o UserKnownHostsFile="%SSH_KNOWN_HOSTS%" ^
+                        "%WORKSPACE%\\backend\\target\\student-attendance.jar" ^
+                        %SSH_USER%@%SSH_HOST%:/tmp/student-attendance.jar
+
+                    if errorlevel 1 exit /b 1
+                '''
+
+                echo 'Preparing release version and executing Ansible deployment.'
+
+                bat '''
+                    @echo off
+
+                    ssh -i "%SSH_KEY%" ^
+                        -o BatchMode=yes ^
+                        -o StrictHostKeyChecking=yes ^
+                        -o UserKnownHostsFile="%SSH_KNOWN_HOSTS%" ^
+                        %SSH_USER%@%SSH_HOST% ^
+                        "printf 'app_jar_src: /tmp/student-attendance.jar\\napp_version: jenkins-%BUILD_NUMBER%\\n' > /tmp/deploy-vars.yml && sudo -n /usr/local/sbin/deploy-attendance"
+
+                    if errorlevel 1 exit /b 1
+                '''
             }
         }
 
@@ -173,20 +208,19 @@ pipeline {
             when {
                 expression {
                     params.DEPLOY &&
-                    env.BRANCH_SHORT == params.DEPLOY_BRANCH &&
-                    params.APP_HEALTH_URL?.trim()
+                    env.BRANCH_SHORT == params.DEPLOY_BRANCH
                 }
             }
 
             steps {
+                echo "Checking application health at ${params.APP_HEALTH_URL}"
+
                 bat '''
                     @echo off
 
-                    powershell -NoProfile -ExecutionPolicy Bypass -Command "$response = Invoke-RestMethod -Uri $env:APP_HEALTH_URL; if ($response.status -ne 'UP') { Write-Error 'Application health check failed'; exit 1 }; $response | ConvertTo-Json | Set-Content health.json"
+                    powershell -NoProfile -ExecutionPolicy Bypass -Command "$response = Invoke-RestMethod -Uri '%APP_HEALTH_URL%' -TimeoutSec 30; if ($response.status -ne 'UP') { throw 'Application health check failed' }; Write-Output 'Application health: UP'"
 
                     if errorlevel 1 exit /b 1
-
-                    type health.json
                 '''
             }
         }
