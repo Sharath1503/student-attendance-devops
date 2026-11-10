@@ -39,7 +39,7 @@ pipeline {
 
     environment {
         MAVEN_OPTS = '-Dmaven.repo.local=.m2/repository'
-        APP_JAR = 'backend/target/student-attendance.jar'
+        APP_JAR = 'backend\\target\\student-attendance.jar'
     }
 
     stages {
